@@ -2,7 +2,7 @@
 Gestiva Backend - Maternal Health Risk Prediction API
 Tech Stack: Python, Flask, scikit-learn
 """
-
+from firebase import db
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import numpy as np
@@ -14,12 +14,18 @@ from sklearn.metrics import classification_report, accuracy_score
 from sklearn.pipeline import Pipeline
 import logging
 from datetime import datetime
+try:
+    from diet_services import DietRecommendationEngine, DietRepository
+except ModuleNotFoundError:
+    from backend.diet_services import DietRecommendationEngine, DietRepository
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+DIET_REPOSITORY = DietRepository()
+DIET_ENGINE = DietRecommendationEngine()
 
 # ─── ML MODEL TRAINING ───────────────────────────────────────────────────────
 
@@ -182,9 +188,12 @@ def health_check():
 @app.route("/api/predict-risk", methods=["POST"])
 def predict_risk():
     try:
+        print(">>> predict_risk API called")
+
         body = request.get_json()
         if not body:
             return jsonify({"error": "Request body required"}), 400
+
         features = {
             "age": int(body.get("age", 28)),
             "gestational_week": int(body.get("gestational_week", 20)),
@@ -209,15 +218,40 @@ def predict_risk():
             "diabetes_history": int(bool(body.get("diabetes_history", False))),
             "hypertension_history": int(bool(body.get("hypertension_history", False))),
         }
+
         X = pd.DataFrame([features])[FEATURE_COLS]
+
         risk_level = int(RISK_MODEL.predict(X)[0])
         probabilities = RISK_MODEL.predict_proba(X)[0].tolist()
+
         result = generate_recommendations(features, risk_level, probabilities)
+
         result["input_features"] = features
         result["model_accuracy"] = round(MODEL_ACCURACY * 100, 2)
+
+        print(">>> Prediction generated")
+
+        prediction_data = {
+            "timestamp": datetime.utcnow(),
+            "risk_level": result["risk_level"],
+            "probability_low": result["probability_low"],
+            "probability_medium": result["probability_medium"],
+            "probability_high": result["probability_high"],
+            "input_features": features
+        }
+
+        try:
+            print(">>> Saving to Firebase...")
+            db.collection("prediction_history").add(prediction_data)
+            print(">>> Saved to Firebase!")
+        except Exception as firebase_error:
+            print(">>> Firebase Error:", firebase_error)
+
         return jsonify(result), 200
+
     except Exception as e:
         logger.error(f"Prediction error: {e}")
+        print(">>> API Error:", e)
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/feature-importance", methods=["GET"])
@@ -240,5 +274,143 @@ def risk_stats():
         "early_detection_rate": 82.5
     })
 
+
+@app.route("/api/diet/profile/<user_id>", methods=["GET"])
+def get_diet_profile(user_id):
+    profile = DIET_REPOSITORY.get_profile(user_id)
+    if not profile:
+        return jsonify({"error": "Profile not found"}), 404
+    profile["previous_diet_plans"] = DIET_REPOSITORY.list_plans(user_id)
+    return jsonify(profile), 200
+
+
+@app.route("/api/diet/profile", methods=["POST", "PUT"])
+def save_diet_profile():
+    try:
+        body = request.get_json() or {}
+        errors = DIET_ENGINE.validate_profile(body)
+        if errors:
+            return jsonify({"error": "Validation failed", "fields": errors}), 400
+        profile = DIET_REPOSITORY.upsert_profile(body)
+        return jsonify({"message": "Profile saved", "profile": profile}), 200
+    except ValueError as exc:
+        return jsonify({"error": "Invalid profile values", "details": str(exc)}), 400
+    except Exception as exc:
+        logger.error(f"Diet profile save error: {exc}")
+        return jsonify({"error": "Unable to save profile"}), 500
+
+
+@app.route("/api/diet/profile/<user_id>", methods=["DELETE"])
+def delete_diet_profile(user_id):
+    deleted = DIET_REPOSITORY.delete_profile(user_id)
+    if not deleted:
+        return jsonify({"error": "Profile not found"}), 404
+    return jsonify({"message": "Profile and diet history deleted"}), 200
+
+
+@app.route("/api/diet/body-type", methods=["POST"])
+def classify_body_type():
+    try:
+        body = request.get_json() or {}
+        user_id = body.get("user_id")
+        answers = body.get("answers") or {}
+        if not user_id or not isinstance(answers, dict):
+            return jsonify({"error": "user_id and answers are required"}), 400
+        if not DIET_REPOSITORY.get_profile(user_id):
+            return jsonify({"error": "Profile must be saved before body type classification"}), 404
+        body_type, scores = DIET_ENGINE.classify_body_type(answers)
+        profile = DIET_REPOSITORY.update_body_type(user_id, body_type, scores)
+        return jsonify({"body_type": body_type, "scores": scores, "profile": profile}), 200
+    except Exception as exc:
+        logger.error(f"Body type classification error: {exc}")
+        return jsonify({"error": "Unable to classify body type"}), 500
+
+
+@app.route("/api/diet/plans/generate", methods=["POST"])
+def generate_diet_plan():
+    try:
+        body = request.get_json() or {}
+        errors = DIET_ENGINE.validate_questionnaire(body)
+        if errors:
+            return jsonify({"error": "Validation failed", "fields": errors}), 400
+        profile = DIET_REPOSITORY.get_profile(body["user_id"])
+        if not profile:
+            return jsonify({"error": "Profile not found. Save profile before generating a diet plan."}), 404
+        plan = DIET_ENGINE.generate_plan(body, profile)
+        saved_plan = DIET_REPOSITORY.save_plan(body["user_id"], body, plan)
+        return jsonify({"message": "Diet plan generated", "plan": saved_plan}), 201
+    except ValueError as exc:
+        return jsonify({"error": "Invalid questionnaire values", "details": str(exc)}), 400
+    except Exception as exc:
+        logger.error(f"Diet plan generation error: {exc}")
+        return jsonify({"error": "Unable to generate diet plan"}), 500
+
+
+@app.route("/api/diet/plans/<user_id>", methods=["GET"])
+def list_diet_plans(user_id):
+    return jsonify({"plans": DIET_REPOSITORY.list_plans(user_id)}), 200
+
+
+@app.route("/api/diet/plans/<user_id>/<plan_id>", methods=["GET"])
+def get_diet_plan(user_id, plan_id):
+    plan = DIET_REPOSITORY.get_plan(user_id, plan_id)
+    if not plan:
+        return jsonify({"error": "Diet plan not found"}), 404
+    return jsonify({"plan": plan}), 200
+
+
+@app.route("/api/diet/plans/<user_id>/compare", methods=["GET"])
+def compare_diet_plans(user_id):
+    previous_id = request.args.get("previous")
+    current_id = request.args.get("current")
+    if not previous_id or not current_id:
+        return jsonify({"error": "previous and current plan ids are required"}), 400
+    previous = DIET_REPOSITORY.get_plan(user_id, previous_id)
+    current = DIET_REPOSITORY.get_plan(user_id, current_id)
+    if not previous or not current:
+        return jsonify({"error": "One or both diet plans were not found"}), 404
+    return jsonify({"comparison": DIET_ENGINE.compare_plans(previous, current)}), 200
+
+@app.route("/api/prediction-history", methods=["GET"])
+def prediction_history():
+
+    try:
+        docs = db.collection("prediction_history").stream()
+
+        history = []
+
+        for doc in docs:
+            item = doc.to_dict()
+            item["id"] = doc.id
+            history.append(item)
+
+        return jsonify(history), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/api/profile", methods=["POST"])
+def save_profile():
+    try:
+        data = request.get_json()
+
+        db.collection("users").document(data["email"]).set({
+            "name": data["name"],
+            "email": data["email"],
+            "age": int(data["age"]),
+            "bloodGroup": data["bloodGroup"],
+            "due_date": data["due_date"],
+            "height": float(data["height"]),
+            "weight": float(data["weight"])
+        })
+
+        return jsonify({
+            "message": "Profile saved successfully"
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            "error": str(e)
+        }), 500     
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)

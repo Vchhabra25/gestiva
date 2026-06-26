@@ -110,15 +110,26 @@ const Dashboard = () => {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              <Button variant="outline" className="border-gestiva-medium text-gestiva-medium hover:bg-gestiva-medium hover:text-white">
-                <Calendar className="w-4 h-4 mr-2" />
-                Weekly Schedule
-              </Button>
-              <Button variant="outline" className="border-gestiva-medium text-gestiva-medium hover:bg-gestiva-medium hover:text-white">
-                <Settings className="w-4 h-4 mr-2" />
-                Settings
-              </Button>
-            </div>
+  <Link to="/weekly-schedule">
+    <Button
+      variant="outline"
+      className="border-gestiva-medium text-gestiva-medium hover:bg-gestiva-medium hover:text-white"
+    >
+      <Calendar className="w-4 h-4 mr-2" />
+      Weekly Schedule
+    </Button>
+  </Link>
+
+  <Link to="/settings">
+    <Button
+      variant="outline"
+      className="border-gestiva-medium text-gestiva-medium hover:bg-gestiva-medium hover:text-white"
+    >
+      <Settings className="w-4 h-4 mr-2" />
+      Settings
+    </Button>
+  </Link>
+</div>
           </div>
         </div>
       </header>

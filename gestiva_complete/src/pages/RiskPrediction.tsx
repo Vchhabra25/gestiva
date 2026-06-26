@@ -206,14 +206,40 @@ const RiskPrediction = () => {
   };
 
   const handleSubmit = async () => {
-    setLoading(true);
-    setResult(null);
-    await new Promise(r => setTimeout(r, 1800));
-    const prediction = runClientSideML(form);
+  setLoading(true);
+  setResult(null);
+
+  try {
+    const response = await fetch("http://127.0.0.1:5000/api/predict-risk", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(form),
+    });
+
+    const prediction = await response.json();
+
     setResult(prediction);
+
+    toast({
+      title: "Prediction Complete",
+      description: `Predicted: ${prediction.risk_level} Risk`,
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    toast({
+      title: "Backend Error",
+      description: "Unable to connect to Flask server.",
+      variant: "destructive",
+    });
+
+  } finally {
     setLoading(false);
-    toast({ title: "ML Analysis Complete", description: `Predicted: ${prediction.risk_level} Risk` });
-  };
+  }
+};
 
   const riskBg = !result ? "" :
     result.risk_level === "High" ? "bg-red-50 border-red-300" :

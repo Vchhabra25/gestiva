@@ -19,6 +19,10 @@ import MedicineReminder from "./pages/MedicineReminder";
 import FamilyAlerts from "./pages/FamilyAlerts";
 import RiskPrediction from "./pages/RiskPrediction";
 import NotFound from "./pages/NotFound";
+import WeeklySchedule from "./pages/WeeklySchedule";
+import Settings from "./pages/Settings";
+import PredictionHistory from "./pages/PredictionHistory";
+import Profile from "./pages/Profile";
 
 const queryClient = new QueryClient();
 
@@ -43,6 +47,10 @@ const App = () => (
           <Route path="/medicine-reminder" element={<MedicineReminder />} />
           <Route path="/family-alerts" element={<FamilyAlerts />} />
           <Route path="/risk-prediction" element={<RiskPrediction />} />
+          <Route path="/weekly-schedule" element={<WeeklySchedule />} />
+          <Route path="/prediction-history" element={<PredictionHistory />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/profile" element={<Profile />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
